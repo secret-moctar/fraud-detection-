@@ -1,23 +1,3 @@
-# =============================================================================
-#  Real-time Banking Fraud Detection - infrastructure
-#
-#  This Compose file REUSES the Docker images you already have locally
-#  (apache/kafka, provectuslabs/kafka-ui, sidi-spark:3.5.3-py311, spark-lab-jupyter)
-#  so nothing heavy has to be rebuilt or re-downloaded.
-#
-#  Isolation from your other project:
-#    * a dedicated Compose project name  ->  its own network + namespaced volume
-#    * NO `container_name:` lines         ->  no clash with your existing
-#                                             (stopped) `kafka`, `spark-master`,
-#                                             ... containers
-#    * a fresh named volume `kafka_data`  ->  Kafka starts on a clean state
-#    * a fresh local `./data` folder      ->  separate analytics storage
-#
-#  The 6 services match exactly the architecture in the project statement
-#  (Section 3.2). The Spark Streaming "processor" is NOT a container: it is a
-#  Python script (processor/processor.py) that you run inside the Jupyter
-#  container, which submits it to the Spark cluster. See getting_started.md.
-# =============================================================================
 
 name: fraud-detection
 
@@ -34,9 +14,6 @@ services:
       - KAFKA_PROCESS_ROLES=broker,controller
       - KAFKA_NODE_ID=0
       - KAFKA_LISTENERS=PLAINTEXT://:9092,EXTERNAL://:9094,CONTROLLER://:9093
-      # EXTERNAL is the listener used by clients OUTSIDE the docker network
-      # (the host laptop, or other laptops on the LAN). For a multi-laptop
-      # demo, set HOST_IP in .env to the main laptop's LAN IP.
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://${HOST_IP:-localhost}:9094
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
@@ -126,49 +103,10 @@ services:
       - ./data:/workspace/data
     environment:
       - SPARK_DAEMON_MEMORY=1024m
-      - SPARK_WORKER_MEMORY=1500m
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - SPARK_WORKER_MEMORY=5000m
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-4}
       - PYSPARK_PYTHON=/usr/bin/python3.11
 
-  spark-worker-2:
-    image: sidi-spark:3.5.3-py311
-    hostname: spark-worker-2
-    depends_on: [spark-master]
-    command:
-      - /opt/spark/bin/spark-class
-      - org.apache.spark.deploy.worker.Worker
-      - spark://spark-master:7077
-      - --webui-port
-      - "8081"
-    ports:
-      - "127.0.0.1:8083:8081"
-    volumes:
-      - ./data:/workspace/data
-    environment:
-      - SPARK_DAEMON_MEMORY=1024m
-      - SPARK_WORKER_MEMORY=1500m
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
-      - PYSPARK_PYTHON=/usr/bin/python3.11
-
-  spark-worker-3:
-    image: sidi-spark:3.5.3-py311
-    hostname: spark-worker-3
-    depends_on: [spark-master]
-    command:
-      - /opt/spark/bin/spark-class
-      - org.apache.spark.deploy.worker.Worker
-      - spark://spark-master:7077
-      - --webui-port
-      - "8081"
-    ports:
-      - "127.0.0.1:8084:8081"
-    volumes:
-      - ./data:/workspace/data
-    environment:
-      - SPARK_DAEMON_MEMORY=1024m
-      - SPARK_WORKER_MEMORY=1500m
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
-      - PYSPARK_PYTHON=/usr/bin/python3.11
 
   # ---------------------------------------------------------------------------
   # SERVICE 1 - Transaction generator (Python container).
@@ -205,17 +143,7 @@ services:
       disable: true
     restart: on-failure
 
-  # ---------------------------------------------------------------------------
-  # SERVICE 6 - Jupyter Lab - the Python/Spark environment AND the dashboard.
-  # Reuses your local image `spark-lab-jupyter`.
-  #
-  # This container plays two roles:
-  #   * it hosts the live dashboard notebook  (jupyter/dashboard.ipynb)
-  #   * it is where you run the Spark Streaming processor
-  #     (a terminal here -> `python processor/processor.py`), which submits the
-  #     streaming job to the Spark cluster via PYSPARK_SUBMIT_ARGS.
-  # Open http://localhost:8888  (token: bigdata)
-  # ---------------------------------------------------------------------------
+
   jupyter:
     image: spark-lab-jupyter
     hostname: jupyter
@@ -237,20 +165,12 @@ services:
       - KAFKA_TOPIC=${KAFKA_TOPIC}
       - DATA_DIR=/workspace/data
       - TRIGGER_INTERVAL=${TRIGGER_INTERVAL}
-      # Spark submit args: master, the Kafka connector jars (LOCAL files - we
-      # pre-downloaded them into ./spark-extras so the processor needs no
-      # internet and no Maven access), and the driver host so the cluster
-      # workers can call back to this container.
-      # CPU cap: spark.cores.max=3 + spark.executor.cores=1 means the Spark
-      # application will use at most 3 CPU cores TOTAL across the whole
-      # cluster, spread as 1 core on each of the 3 workers. The rest of your
-      # machine stays free.
       - PYSPARK_SUBMIT_ARGS=--conf spark.pyspark.python=/usr/bin/python3.11 --conf spark.pyspark.driver.python=/opt/conda/bin/python --conf spark.driver.host=jupyter --conf spark.driver.memory=768m --conf spark.executor.memory=768m --conf spark.executor.cores=${SPARK_EXECUTOR_CORES:-1} --conf spark.cores.max=${SPARK_CORES_MAX:-3} --conf spark.sql.shuffle.partitions=4 --master spark://spark-master:7077 --jars /opt/spark-extras/spark-sql-kafka-0-10_2.12-3.5.3.jar,/opt/spark-extras/spark-token-provider-kafka-0-10_2.12-3.5.3.jar,/opt/spark-extras/kafka-clients-3.5.1.jar,/opt/spark-extras/commons-pool2-2.11.1.jar,/opt/spark-extras/hadoop-client-runtime-3.3.4.jar,/opt/spark-extras/hadoop-client-api-3.3.4.jar,/opt/spark-extras/snappy-java-1.1.10.5.jar,/opt/spark-extras/slf4j-api-2.0.7.jar,/opt/spark-extras/commons-logging-1.1.3.jar,/opt/spark-extras/jsr305-3.0.0.jar,/opt/spark-extras/zstd-jni-1.5.5-1.jar,/opt/spark-extras/lz4-java-1.8.0.jar pyspark-shell
     volumes:
-      - ./jupyter:/home/jovyan/work          # dashboard.ipynb
-      - ./processor:/home/jovyan/work/processor   # processor.py (run from a terminal)
-      - ./data:/workspace/data               # shared analytics storage
-      - ./spark-extras:/opt/spark-extras:ro   # pre-downloaded Kafka connector jars
+      - ./jupyter:/home/jovyan/work          
+      - ./processor:/home/jovyan/work/processor   
+      - ./data:/workspace/data               
+      - ./spark-extras:/opt/spark-extras:ro   
 
 volumes:
   kafka_data:

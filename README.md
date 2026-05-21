@@ -150,8 +150,7 @@ Full step-by-step instructions with execution traces are in
     ├── DOCUMENTATION.md       complete internal documentation
     ├── architecture.md        diagrams and data flow
     ├── design_decisions.md    design rationale and trade-offs
-    ├── multi-laptop.md        running the stack across several laptops on a LAN
-    └── presentation.pptx      
+    └── multi-laptop.md        running the stack across several laptops on a LAN    
 ```
 
 ## 8. Stopping
