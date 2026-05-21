@@ -142,7 +142,6 @@ Full step-by-step instructions with execution traces are in
 │   ├── generator.py          SERVICE 1 - transaction generator
 │   └── requirements.txt
 ├── processor/
-│   ├── processor.py          Spark Streaming job (run inside the Jupyter container)
 │   └── requirements.txt
 ├── jupyter/
 │   ├── dashboard.ipynb        SERVICE 6 - live dashboard notebook
@@ -153,8 +152,7 @@ Full step-by-step instructions with execution traces are in
     ├── architecture.md        diagrams and data flow
     ├── design_decisions.md    design rationale and trade-offs
     ├── multi-laptop.md        running the stack across several laptops on a LAN
-    ├── presentation.md        class presentation outline
-    └── presentation.pptx      slides for the in-class presentation (4 speakers)
+    └── presentation.pptx      
 ```
 
 ## 8. Stopping
