@@ -142,10 +142,9 @@ Full step-by-step instructions with execution traces are in
 │   ├── generator.py          SERVICE 1 - transaction generator
 │   └── requirements.txt
 ├── processor/
-│   └── requirements.txt
+│   └── processor.py
 ├── jupyter/
-│   ├── dashboard.ipynb        SERVICE 6 - live dashboard notebook
-│   └── requirements.txt
+│   └── dashboard.ipynb        SERVICE 6 - live dashboard notebook
 ├── data/                     shared volume (Parquet output, created at runtime)
 └── docs/
     ├── DOCUMENTATION.md       complete internal documentation
