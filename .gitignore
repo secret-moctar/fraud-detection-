@@ -1,4 +1,5 @@
 *__pycache__
 data/*
-docs
+
 *ipynb_checkpoints
+spark-extras/*
