@@ -95,8 +95,9 @@ One Docker command — no Compose, no source code, no Python:
 docker run -d \
     --name fraud-extra-worker \
     --network host \
-    apache/spark:3.5.3 \
+    sid-spark:3.5.3 \
     /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker \
+    
         spark://192.168.1.42:7077
 ```
 

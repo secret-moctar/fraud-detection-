@@ -1,38 +1,3 @@
-"""
-Spark Streaming Fraud-Detection Processor
-=========================================
-Consumes the transaction stream from Kafka, stores every transaction in a
-Parquet "ledger", and recomputes the full set of per-user fraud-detection
-metrics required by the project statement (Section 2.1).
-
-Design in one paragraph
------------------------
-We use Spark Structured Streaming to read Kafka, but instead of relying on
-streaming aggregations (which cannot compute exact COUNT DISTINCT and make
-multi-window logic awkward) we use `foreachBatch`. For every micro-batch we:
-
-    1. append the new transactions to a partitioned Parquet ledger,
-    2. read the whole recent ledger back,
-    3. recompute every metric with ordinary *batch* Spark SQL
-       (which fully supports countDistinct, multiple windows, joins),
-    4. write the results where the Jupyter dashboard can read them.
-
-This keeps the code simple and 100% correct, at the cost of recomputing from
-the ledger each batch. For a class demo (a few hundred thousand rows) that is
-instant; the trade-off and the production alternative are discussed in
-docs/design_decisions.md.
-
-This script is NOT a container of its own: it is run *inside the Jupyter
-container* (the project's Python/Spark environment), which already provides
-the Spark master URL and the Kafka connector via PYSPARK_SUBMIT_ARGS. Start it
-from a Jupyter terminal with:  python processor/processor.py
-
-Outputs (all under DATA_DIR, shared with the Jupyter container):
-    /workspace/data/tx_store            - the append-only transaction ledger
-    /workspace/data/output/user_metrics - one row per user, all required metrics
-    /workspace/data/output/recent_tx    - last few minutes of raw transactions
-"""
-
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -43,8 +8,7 @@ from pyspark.sql import types as T
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
-# KAFKA_BOOTSTRAP_SERVERS is the variable name already used by the Jupyter
-# container; we also accept KAFKA_BOOTSTRAP as a fallback.
+
 KAFKA_BOOTSTRAP  = (os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
                     or os.environ.get("KAFKA_BOOTSTRAP")
                     or "kafka:9092")
@@ -56,8 +20,7 @@ TX_STORE   = f"{DATA_DIR}/tx_store"
 OUT_DIR    = f"{DATA_DIR}/output"
 CHECKPOINT = f"{DATA_DIR}/checkpoints/processor"
 
-# The four sliding windows required by the statement, expressed in seconds.
-# "life" (since account creation) is handled separately as the full ledger.
+
 WINDOWS = [
     ("3h", 3 * 3600),
     ("7d", 7 * 86400),
@@ -65,7 +28,8 @@ WINDOWS = [
     ("3m", 90 * 86400),
 ]
 
-# JSON schema of the incoming Kafka messages.
+#json
+
 MESSAGE_SCHEMA = T.StructType([
     T.StructField("msg_entity",     T.StringType()),
     T.StructField("app_type",       T.StringType()),
@@ -85,14 +49,6 @@ MESSAGE_SCHEMA = T.StructType([
 # --------------------------------------------------------------------------
 def compute_side(ledger, role, now):
     """
-    Compute every metric for one "side" of the activity.
-
-      role = "sent"  -> user is the sender,   counterparty is the receiver
-      role = "recv"  -> user is the receiver, counterparty is the sender
-
-    `ledger` is expected to already be projected to the columns:
-        user, counterparty, amount, ts
-
     Returns one row per user with:
       count_<role>_<window>          number of transactions
       avg_amount_<role>_<window>     average amount
@@ -142,7 +98,7 @@ def process_batch(batch_df, batch_id):
         batch_df
         .filter(F.col("tx_id").isNotNull() & F.col("amount").isNotNull())
         .withColumn("ts", F.to_timestamp("date", "yyyy-MM-dd'T'HH:mm:ss'Z'"))
-        .withColumn("dt", F.date_format("ts", "yyyy-MM-dd"))   # partition key
+        .withColumn("dt", F.date_format("ts", "yyyy-MM-dd"))   
         .select("msg_entity", "app_type", "send_entity", "receive_entity",
                 "send_id", "receive_id", "amount", "ts", "tx_type", "tx_id", "dt")
     )
@@ -150,9 +106,6 @@ def process_batch(batch_df, batch_id):
 
     # --- 2. Read the whole ledger back -------------------------------------
     ledger = spark.read.parquet(TX_STORE).cache()
-    # Naive UTC datetime: keeps the comparison consistent with the parsed
-    # `ts` column (the generator emits UTC timestamps and the containers run
-    # in UTC), and avoids timezone-aware literal edge cases.
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Two views of the same ledger: one keyed by sender, one by receiver.
