@@ -194,18 +194,9 @@ def main():
         .format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
         .option("subscribe", KAFKA_TOPIC)
-        # "earliest" so we also pick up the historical backfill the generator
-        # sends at startup, regardless of which container started first.
         .option("startingOffsets", "earliest")
-        # Caps the size of each micro-batch. 20k keeps each batch fast on a
-        # modest cluster - the recompute is O(ledger size), so smaller batches
-        # actually drain faster overall than one giant batch.
         .option("maxOffsetsPerTrigger", "2000")
-        # Tolerate a wiped Kafka topic when the on-disk checkpoint still
-        # references old offsets (typical after `docker compose down -v`
-        # without clearing ./data/checkpoints). Without this option Spark
-        # raises "Partition X's offset was changed ... data may have been
-        # missed" and the streaming query terminates.
+        
         .option("failOnDataLoss", "false")
         .load()
     )
@@ -217,7 +208,7 @@ def main():
     query = (
         parsed.writeStream
         .foreachBatch(process_batch)
-        .option("checkpointLocation", CHECKPOINT)   # offsets -> fault tolerance
+        .option("checkpointLocation", CHECKPOINT)   
         .trigger(processingTime=TRIGGER_INTERVAL)
         .start()
     )

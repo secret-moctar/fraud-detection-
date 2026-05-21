@@ -29,11 +29,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 from confluent_kafka import Producer, KafkaException
 
-# --------------------------------------------------------------------------
-# Configuration (read from environment - see .env / docker-compose.yml)
-# --------------------------------------------------------------------------
-# KAFKA_BOOTSTRAP_SERVERS is the variable name used across this stack; we also
-# accept KAFKA_BOOTSTRAP as a fallback.
+
 KAFKA_BOOTSTRAP = (os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
                    or os.environ.get("KAFKA_BOOTSTRAP")
                    or "kafka:9092")
@@ -50,6 +46,7 @@ TARGET_TPS      = float(os.environ.get("TARGET_TPS", "300"))    # desired transa
 #   FRAUD_RATE = 0.0  -> no fraud (default)
 #   FRAUD_RATE = 0.05 -> ~1 fraud burst every 20 seconds
 #   FRAUD_RATE = 0.2  -> ~1 fraud burst every 5 seconds (very visible demo)
+
 FRAUD_RATE        = float(os.environ.get("FRAUD_RATE", "0.0"))
 FRAUD_BURST_SIZE  = int(os.environ.get("FRAUD_BURST_SIZE", "20"))
 FRAUD_AMOUNT_MULT = float(os.environ.get("FRAUD_AMOUNT_MULT", "10.0"))

@@ -1,0 +1,256 @@
+# =============================================================================
+#  Real-time Banking Fraud Detection - infrastructure
+#
+#  This Compose file REUSES the Docker images you already have locally
+#  (apache/kafka, provectuslabs/kafka-ui, sidi-spark:3.5.3-py311, spark-lab-jupyter)
+#  so nothing heavy has to be rebuilt or re-downloaded.
+#
+#  Isolation from your other project:
+#    * a dedicated Compose project name  ->  its own network + namespaced volume
+#    * NO `container_name:` lines         ->  no clash with your existing
+#                                             (stopped) `kafka`, `spark-master`,
+#                                             ... containers
+#    * a fresh named volume `kafka_data`  ->  Kafka starts on a clean state
+#    * a fresh local `./data` folder      ->  separate analytics storage
+#
+#  The 6 services match exactly the architecture in the project statement
+#  (Section 3.2). The Spark Streaming "processor" is NOT a container: it is a
+#  Python script (processor/processor.py) that you run inside the Jupyter
+#  container, which submits it to the Spark cluster. See getting_started.md.
+# =============================================================================
+
+name: fraud-detection
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 2 - Kafka broker (your exact configuration; only the volume name
+  # is namespaced by the Compose project so it stays isolated).
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: "apache/kafka:latest"
+    hostname: kafka
+    environment:
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_NODE_ID=0
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      # EXTERNAL is the listener used by clients OUTSIDE the docker network
+      # (the host laptop, or other laptops on the LAN). For a multi-laptop
+      # demo, set HOST_IP in .env to the main laptop's LAN IP.
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://${HOST_IP:-localhost}:9094
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_NUM_PARTITIONS=1
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_HEAP_OPTS=-Xms256m -Xmx512m
+      - KAFKA_JVM_PERFORMANCE_OPTS=-XX:MaxRAMPercentage=60
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    ports:
+      - "0.0.0.0:9092:9092"
+      - "0.0.0.0:9094:9094"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 3 - Kafka UI - monitor the topic at http://localhost:8080
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    hostname: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=sid45
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - JAVA_TOOL_OPTIONS=-Xms64m -Xmx192m
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 4 - Spark master - cluster coordinator. Web UI: http://localhost:8081
+  # Reuses your local image `sidi-spark:3.5.3-py311` (no build).
+  # ---------------------------------------------------------------------------
+  spark-master:
+    image: sidi-spark:3.5.3-py311
+    hostname: spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    ports:
+      - "0.0.0.0:7077:7077"   # Spark master RPC
+      - "0.0.0.0:8081:8080"   # Spark master web UI
+      - "0.0.0.0:4040:4040"   # Spark application UI (active during jobs)
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - SPARK_DAEMON_MEMORY=512m
+      - PYSPARK_PYTHON=/usr/bin/python3.11
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 5 - Spark workers - 3 workers, as required by the statement.
+  # All three reuse your `sidi-spark:3.5.3-py311` image.
+  # ---------------------------------------------------------------------------
+  spark-worker-1:
+    image: sidi-spark:3.5.3-py311
+    hostname: spark-worker-1
+    depends_on: [spark-master]
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --webui-port
+      - "8081"
+    ports:
+      - "127.0.0.1:8082:8081"
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - SPARK_DAEMON_MEMORY=1024m
+      - SPARK_WORKER_MEMORY=1500m
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - PYSPARK_PYTHON=/usr/bin/python3.11
+
+  spark-worker-2:
+    image: sidi-spark:3.5.3-py311
+    hostname: spark-worker-2
+    depends_on: [spark-master]
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --webui-port
+      - "8081"
+    ports:
+      - "127.0.0.1:8083:8081"
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - SPARK_DAEMON_MEMORY=1024m
+      - SPARK_WORKER_MEMORY=1500m
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - PYSPARK_PYTHON=/usr/bin/python3.11
+
+  spark-worker-3:
+    image: sidi-spark:3.5.3-py311
+    hostname: spark-worker-3
+    depends_on: [spark-master]
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --webui-port
+      - "8081"
+    ports:
+      - "127.0.0.1:8084:8081"
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - SPARK_DAEMON_MEMORY=1024m
+      - SPARK_WORKER_MEMORY=1500m
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - PYSPARK_PYTHON=/usr/bin/python3.11
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 1 - Transaction generator (Python container).
+  # Reuses the `spark-lab-jupyter` image, which already ships numpy and
+  # confluent-kafka -> zero pip installs at startup.
+  # ---------------------------------------------------------------------------
+  generator:
+    image: spark-lab-jupyter
+    hostname: generator
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./generator:/opt/generator:ro
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=${KAFKA_TOPIC}
+      - POP_BANK_X=${POP_BANK_X}
+      - POP_EXTERNAL=${POP_EXTERNAL}
+      - TARGET_TPS=${TARGET_TPS}
+      - BACKFILL_TX=${BACKFILL_TX}
+      - BACKFILL_DAYS=${BACKFILL_DAYS}
+      - FRAUD_RATE=${FRAUD_RATE}
+      - FRAUD_BURST_SIZE=${FRAUD_BURST_SIZE}
+      - FRAUD_AMOUNT_MULT=${FRAUD_AMOUNT_MULT}
+      - SEED=${SEED}
+      - PYTHONUNBUFFERED=1
+    # Override the image's Jupyter entrypoint to run the generator script.
+    entrypoint: ["/opt/conda/bin/python"]
+    command: ["/opt/generator/generator.py"]
+    # The base image inherits a Jupyter-Lab healthcheck that does not apply
+    # here (we don't run Jupyter in this container).
+    healthcheck:
+      disable: true
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # SERVICE 6 - Jupyter Lab - the Python/Spark environment AND the dashboard.
+  # Reuses your local image `spark-lab-jupyter`.
+  #
+  # This container plays two roles:
+  #   * it hosts the live dashboard notebook  (jupyter/dashboard.ipynb)
+  #   * it is where you run the Spark Streaming processor
+  #     (a terminal here -> `python processor/processor.py`), which submits the
+  #     streaming job to the Spark cluster via PYSPARK_SUBMIT_ARGS.
+  # Open http://localhost:8888  (token: bigdata)
+  # ---------------------------------------------------------------------------
+  jupyter:
+    image: spark-lab-jupyter
+    hostname: jupyter
+    depends_on:
+      kafka:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=bigdata
+      # Make `python processor/processor.py` work from a plain shell too -
+      # the Spark-bundled pyspark is on PYTHONPATH at the container level.
+      - PYTHONPATH=/usr/local/spark/python:/usr/local/spark/python/lib/py4j-0.10.9.7-src.zip
+      - SPARK_MASTER=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=${KAFKA_TOPIC}
+      - DATA_DIR=/workspace/data
+      - TRIGGER_INTERVAL=${TRIGGER_INTERVAL}
+      # Spark submit args: master, the Kafka connector jars (LOCAL files - we
+      # pre-downloaded them into ./spark-extras so the processor needs no
+      # internet and no Maven access), and the driver host so the cluster
+      # workers can call back to this container.
+      # CPU cap: spark.cores.max=3 + spark.executor.cores=1 means the Spark
+      # application will use at most 3 CPU cores TOTAL across the whole
+      # cluster, spread as 1 core on each of the 3 workers. The rest of your
+      # machine stays free.
+      - PYSPARK_SUBMIT_ARGS=--conf spark.pyspark.python=/usr/bin/python3.11 --conf spark.pyspark.driver.python=/opt/conda/bin/python --conf spark.driver.host=jupyter --conf spark.driver.memory=768m --conf spark.executor.memory=768m --conf spark.executor.cores=${SPARK_EXECUTOR_CORES:-1} --conf spark.cores.max=${SPARK_CORES_MAX:-3} --conf spark.sql.shuffle.partitions=4 --master spark://spark-master:7077 --jars /opt/spark-extras/spark-sql-kafka-0-10_2.12-3.5.3.jar,/opt/spark-extras/spark-token-provider-kafka-0-10_2.12-3.5.3.jar,/opt/spark-extras/kafka-clients-3.5.1.jar,/opt/spark-extras/commons-pool2-2.11.1.jar,/opt/spark-extras/hadoop-client-runtime-3.3.4.jar,/opt/spark-extras/hadoop-client-api-3.3.4.jar,/opt/spark-extras/snappy-java-1.1.10.5.jar,/opt/spark-extras/slf4j-api-2.0.7.jar,/opt/spark-extras/commons-logging-1.1.3.jar,/opt/spark-extras/jsr305-3.0.0.jar,/opt/spark-extras/zstd-jni-1.5.5-1.jar,/opt/spark-extras/lz4-java-1.8.0.jar pyspark-shell
+    volumes:
+      - ./jupyter:/home/jovyan/work          # dashboard.ipynb
+      - ./processor:/home/jovyan/work/processor   # processor.py (run from a terminal)
+      - ./data:/workspace/data               # shared analytics storage
+      - ./spark-extras:/opt/spark-extras:ro   # pre-downloaded Kafka connector jars
+
+volumes:
+  kafka_data:
